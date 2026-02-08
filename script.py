@@ -45,29 +45,46 @@ def get_match_data(url):
         apply_stealth(page)
         
         print(f"Navigating to {url}...")
-        page.goto(url, timeout=90000, wait_until='domcontentloaded')
-        time.sleep(5)
-        content = page.content()
-        browser.close()
-        
-    soup = BeautifulSoup(content, 'html.parser')
-    canonical = soup.find('link', rel='canonical')
-    real_url = canonical.get('href')
-    real_url = real_url.replace('/summary','/scorecard')
-    
-    with sync_playwright() as p:
-        print("Launching browser for scraping...")
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-        apply_stealth(page)
-        
-        print(f"Navigating to {real_url}...")
-        page.goto(real_url, timeout=90000, wait_until='domcontentloaded')
-        time.sleep(5)
+        try:
+            # 1. First navigation to input URL (handles redirects/short links)
+            page.goto(url, timeout=90000, wait_until='domcontentloaded')
+            time.sleep(5)
+            
+            # 2. Extract Canonical URL (Priority Source)
+            # We get content now to check for canonical tag
+            initial_content = page.content()
+            soup_temp = BeautifulSoup(initial_content, 'html.parser')
+            canonical_tag = soup_temp.find('link', rel='canonical')
+            
+            target_url = page.url # Default fallback
+            
+            if canonical_tag and canonical_tag.get('href'):
+                print(f"Found canonical URL: {canonical_tag.get('href')}")
+                target_url = canonical_tag.get('href')
+            else:
+                print("No canonical tag found. Using browser URL.")
+            
+            # 3. Transform /summary -> /scorecard
+            if '/summary' in target_url:
+                print("Detected Summary page. Switching to Scorecard...")
+                target_url = target_url.replace('/summary', '/scorecard')
+            
+            # 4. Navigate to Final Target if needed
+            # We check if we are already there to avoid unnecessary reloads
+            # (ignoring minor differences like trailing slashes implies exact match check is strict but safe)
+            if target_url != page.url:
+                print(f"Navigating to final Scorecard URL: {target_url}")
+                page.goto(target_url, timeout=90000, wait_until='domcontentloaded')
+                time.sleep(5)
+            else:
+                print("Already on target URL.")
+
+        except Exception as e:
+            print(f"Navigation error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+        # 5. Capture Final Content
         content = page.content()
         browser.close()
         
