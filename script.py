@@ -79,6 +79,13 @@ def get_match_data(url):
             else:
                 print("Already on target URL.")
 
+            # WAITING STRATEGY: Ensure the Next.js data script is loaded
+            try:
+                print("Waiting for data script to load...")
+                page.wait_for_selector("#__NEXT_DATA__", state="attached", timeout=20000)
+            except Exception as e:
+                print(f"Warning: Timed out waiting for #__NEXT_DATA__: {e}")
+
         except Exception as e:
             print(f"Navigation error: {e}")
             import traceback
@@ -86,6 +93,8 @@ def get_match_data(url):
             
         # 5. Capture Final Content
         content = page.content()
+        title = page.title()
+        print(f"Page Title: {title}")
         browser.close()
         
     soup = BeautifulSoup(content, 'html.parser')
@@ -93,7 +102,9 @@ def get_match_data(url):
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
-        raise Exception("Could not find __NEXT_DATA__ script tag.")
+        print(f"DEBUG: Page Title was: {title}")
+        print("DEBUG: This usually means the page was blocked (Cloudflare) or failed to load correctly.")
+        raise Exception(f"Could not find __NEXT_DATA__ script tag. Page title: {title}")
         
     data = json.loads(next_data_script.string)
     # Navigate to the summary data
