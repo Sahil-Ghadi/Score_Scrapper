@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import json
 import time
 import os
+import random
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -36,42 +37,72 @@ def apply_stealth(page):
 def get_match_data(url):
     with sync_playwright() as p:
         print("Launching browser for scraping...")
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
+            ]
+        )
         context = browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         )
         page = context.new_page()
         apply_stealth(page)
         
         print(f"Navigating to {url}...")
         try:
-            # 1. First navigation to input URL (handles redirects/short links)
             page.goto(url, timeout=90000, wait_until='domcontentloaded')
-            time.sleep(5)
+            
+            # --- CLOUDFLARE CHALLENGE SOLVER ---
+            for attempt in range(10): # Try for up to 50 seconds (10 * 5s)
+                title = page.title()
+                print(f"Status check ({attempt+1}/10): Title is '{title}'")
+                
+                # If title looks like a block, wait and simulate human
+                if any(x in title for x in ["Just a moment", "Attention Required", "Cloudflare", "DDOS"]):
+                    print(" detected Cloudflare challenge. simulating human behavior...")
+                    try:
+                        # Random mouse movements
+                        for _ in range(3):
+                            page.mouse.move(random.randint(100, 800), random.randint(100, 600))
+                            time.sleep(random.uniform(0.5, 1.5))
+                    except:
+                        pass
+                    time.sleep(2)
+                else:
+                    print("Page seems loaded (no Cloudflare title detected).")
+                    break
+            
+            # 1. capture expanded url from browser
+            current_url = page.url
+            print(f"Resolved URL: {current_url}")
             
             # 2. Extract Canonical URL (Priority Source)
-            # We get content now to check for canonical tag
-            initial_content = page.content()
-            soup_temp = BeautifulSoup(initial_content, 'html.parser')
-            canonical_tag = soup_temp.find('link', rel='canonical')
-            
-            target_url = page.url # Default fallback
-            
-            if canonical_tag and canonical_tag.get('href'):
-                print(f"Found canonical URL: {canonical_tag.get('href')}")
-                target_url = canonical_tag.get('href')
-            else:
-                print("No canonical tag found. Using browser URL.")
-            
+            try:
+                initial_content = page.content()
+                soup_temp = BeautifulSoup(initial_content, 'html.parser')
+                canonical_tag = soup_temp.find('link', rel='canonical')
+                
+                target_url = page.url # Default fallback
+                
+                if canonical_tag and canonical_tag.get('href'):
+                    print(f"Found canonical URL: {canonical_tag.get('href')}")
+                    target_url = canonical_tag.get('href')
+                else:
+                    print("No canonical tag found. Using browser URL.")
+            except Exception as e:
+                print(f"Error extracting canonical: {e}")
+                target_url = page.url
+
             # 3. Transform /summary -> /scorecard
             if '/summary' in target_url:
                 print("Detected Summary page. Switching to Scorecard...")
                 target_url = target_url.replace('/summary', '/scorecard')
             
             # 4. Navigate to Final Target if needed
-            # We check if we are already there to avoid unnecessary reloads
-            # (ignoring minor differences like trailing slashes implies exact match check is strict but safe)
             if target_url != page.url:
                 print(f"Navigating to final Scorecard URL: {target_url}")
                 page.goto(target_url, timeout=90000, wait_until='domcontentloaded')
@@ -82,7 +113,7 @@ def get_match_data(url):
             # WAITING STRATEGY: Ensure the Next.js data script is loaded
             try:
                 print("Waiting for data script to load...")
-                page.wait_for_selector("#__NEXT_DATA__", state="attached", timeout=20000)
+                page.wait_for_selector("#__NEXT_DATA__", state="attached", timeout=15000)
             except Exception as e:
                 print(f"Warning: Timed out waiting for #__NEXT_DATA__: {e}")
 
@@ -102,8 +133,12 @@ def get_match_data(url):
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
+        # Dump the content for debugging
+        debug_filename = "debug_failed_page.html"
+        with open(debug_filename, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"DEBUG: Saved failed page HTML to {debug_filename} for inspection.")
         print(f"DEBUG: Page Title was: {title}")
-        print("DEBUG: This usually means the page was blocked (Cloudflare) or failed to load correctly.")
         raise Exception(f"Could not find __NEXT_DATA__ script tag. Page title: {title}")
         
     data = json.loads(next_data_script.string)
