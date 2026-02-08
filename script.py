@@ -3,7 +3,6 @@ from bs4 import BeautifulSoup
 import json
 import time
 import os
-import random
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -35,97 +34,67 @@ def apply_stealth(page):
     """)
 
 def get_match_data(url):
+    # Data packet default structure
+    empty_data = {'scorecard': [], 'meta': {
+        'result': 'Error', 
+        'man_of_the_match': 'N/A', 
+        'match_overs': 'N/A', 
+        'tournament_name': 'N/A'
+    }}
+
+    print("Launching browser for scraping...")
     with sync_playwright() as p:
-        print("Launching browser for scraping...")
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage"
-            ]
-        )
+        # Add args to help with sandbox issues in some environments like Streamlit Cloud
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
         context = browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = context.new_page()
         apply_stealth(page)
         
-        print(f"Navigating to {url}...")
+        print(f"Navigating to initial URL: {url}...")
         try:
-            page.goto(url, timeout=90000, wait_until='domcontentloaded')
-            
-            # --- CLOUDFLARE CHALLENGE SOLVER ---
-            for attempt in range(10): # Try for up to 50 seconds (10 * 5s)
-                title = page.title()
-                print(f"Status check ({attempt+1}/10): Title is '{title}'")
-                
-                # If title looks like a block, wait and simulate human
-                if any(x in title for x in ["Just a moment", "Attention Required", "Cloudflare", "DDOS"]):
-                    print(" detected Cloudflare challenge. simulating human behavior...")
-                    try:
-                        # Random mouse movements
-                        for _ in range(3):
-                            page.mouse.move(random.randint(100, 800), random.randint(100, 600))
-                            time.sleep(random.uniform(0.5, 1.5))
-                    except:
-                        pass
-                    time.sleep(2)
-                else:
-                    print("Page seems loaded (no Cloudflare title detected).")
-                    break
-            
-            # 1. capture expanded url from browser
-            current_url = page.url
-            print(f"Resolved URL: {current_url}")
-            
-            # 2. Extract Canonical URL (Priority Source)
-            try:
-                initial_content = page.content()
-                soup_temp = BeautifulSoup(initial_content, 'html.parser')
-                canonical_tag = soup_temp.find('link', rel='canonical')
-                
-                target_url = page.url # Default fallback
-                
-                if canonical_tag and canonical_tag.get('href'):
-                    print(f"Found canonical URL: {canonical_tag.get('href')}")
-                    target_url = canonical_tag.get('href')
-                else:
-                    print("No canonical tag found. Using browser URL.")
-            except Exception as e:
-                print(f"Error extracting canonical: {e}")
-                target_url = page.url
-
-            # 3. Transform /summary -> /scorecard
-            if '/summary' in target_url:
-                print("Detected Summary page. Switching to Scorecard...")
-                target_url = target_url.replace('/summary', '/scorecard')
-            
-            # 4. Navigate to Final Target if needed
-            if target_url != page.url:
-                print(f"Navigating to final Scorecard URL: {target_url}")
-                page.goto(target_url, timeout=90000, wait_until='domcontentloaded')
-                time.sleep(5)
-            else:
-                print("Already on target URL.")
-
-            # WAITING STRATEGY: Ensure the Next.js data script is loaded
-            try:
-                print("Waiting for data script to load...")
-                page.wait_for_selector("#__NEXT_DATA__", state="attached", timeout=15000)
-            except Exception as e:
-                print(f"Warning: Timed out waiting for #__NEXT_DATA__: {e}")
-
+            response = page.goto(url, timeout=60000, wait_until='domcontentloaded')
+            if not response:
+                print("No response from page.")
+            time.sleep(5) # Allow some JS to hydrate headers
         except Exception as e:
-            print(f"Navigation error: {e}")
-            import traceback
-            traceback.print_exc()
-            
-        # 5. Capture Final Content
+            print(f"Error loading initial page: {e}")
+            browser.close()
+            return empty_data
+
+        # Attempt to get canonical URL directly from DOM
+        canonical_href = page.evaluate("() => document.querySelector('link[rel=\"canonical\"]')?.href")
+        
+        if canonical_href:
+            print(f"Canonical URL found: {canonical_href}")
+            real_url = canonical_href.replace('/summary','/scorecard')
+        else:
+            print("Canonical link not found. Using current URL.")
+            real_url = page.url
+            # Helper: if user gave a summary url, force swap even if canonical missing
+            if '/summary' in real_url:
+                real_url = real_url.replace('/summary', '/scorecard')
+
+        print(f"Targeting Final URL: {real_url}")
+        
+        # Determine if we need to navigate again
+        current_url = page.url
+        # Check simplified versions of URLs to avoid unnecessary reloads
+        if current_url.split('?')[0] != real_url.split('?')[0]:
+            print(f"Navigating to {real_url}...")
+            try:
+                page.goto(real_url, timeout=60000, wait_until='domcontentloaded')
+                time.sleep(5)
+            except Exception as e:
+                print(f"Error loading final scorecard page: {e}")
+                browser.close()
+                return empty_data
+        else:
+            print("Already on the correct page.")
+        
         content = page.content()
-        title = page.title()
-        print(f"Page Title: {title}")
         browser.close()
         
     soup = BeautifulSoup(content, 'html.parser')
@@ -133,16 +102,17 @@ def get_match_data(url):
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
-        # Dump the content for debugging
-        debug_filename = "debug_failed_page.html"
-        with open(debug_filename, "w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"DEBUG: Saved failed page HTML to {debug_filename} for inspection.")
-        print(f"DEBUG: Page Title was: {title}")
-        raise Exception(f"Could not find __NEXT_DATA__ script tag. Page title: {title}")
+        print("Detailed Error: Could not find __NEXT_DATA__ script tag.")
+        # Debug: Print title of the page to see if we got blocked
+        print(f"Page Title: {soup.title.string if soup.title else 'No Title'}")
+        return empty_data
         
-    data = json.loads(next_data_script.string)
-    # Navigate to the summary data
+    try:
+        data = json.loads(next_data_script.string)
+    except json.JSONDecodeError:
+        print("Error: Failed to parse __NEXT_DATA__ JSON.")
+        return empty_data
+
     # Navigate to the summary data
     try:
         props = data.get('props', {})
