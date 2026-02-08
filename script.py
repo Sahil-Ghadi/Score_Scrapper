@@ -80,7 +80,6 @@ def get_match_data(url):
         
     data = json.loads(next_data_script.string)
     # Navigate to the summary data
-    try:
     # Navigate to the summary data
     try:
         props = data.get('props', {})
