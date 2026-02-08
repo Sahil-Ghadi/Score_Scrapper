@@ -79,6 +79,7 @@ def get_match_data(url):
 
         print(f"Targeting Final URL: {real_url}")
         
+        # ... navigation logic ...
         # Determine if we need to navigate again
         current_url = page.url
         # Check simplified versions of URLs to avoid unnecessary reloads
@@ -86,7 +87,14 @@ def get_match_data(url):
             print(f"Navigating to {real_url}...")
             try:
                 page.goto(real_url, timeout=60000, wait_until='domcontentloaded')
-                time.sleep(5)
+                
+                # Try to wait for the critical data tag, just in case
+                try:
+                    page.wait_for_selector('script[id="__NEXT_DATA__"]', timeout=5000)
+                except:
+                    print("Warning: Timed out waiting for __NEXT_DATA__ selector.")
+
+                time.sleep(2)
             except Exception as e:
                 print(f"Error loading final scorecard page: {e}")
                 browser.close()
@@ -95,16 +103,32 @@ def get_match_data(url):
             print("Already on the correct page.")
         
         content = page.content()
+        page_title = page.title()
         browser.close()
         
+    print(f"DEBUG: Final Page Title: {page_title}")
+    
+    # Save debug file for inspection
+    try:
+        with open("debug_last_scrape.html", "w", encoding="utf-8") as f:
+            f.write(content)
+        print("DEBUG: Saved page content to debug_last_scrape.html")
+    except Exception as e:
+        print(f"Warning: Could not save debug HTML: {e}")
+
     soup = BeautifulSoup(content, 'html.parser')
 
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
         print("Detailed Error: Could not find __NEXT_DATA__ script tag.")
-        # Debug: Print title of the page to see if we got blocked
-        print(f"Page Title: {soup.title.string if soup.title else 'No Title'}")
+        # Bot detection check
+        text_preview = soup.get_text()[:500].lower()
+        if "challenge" in text_preview or "security" in text_preview:
+            print("CRITICAL: Detected potential security challenge/blocking.")
+        elif "enable javascript" in text_preview:
+            print("CRITICAL: Page requesting JS enable (possible scraped mode detection).")
+        
         return empty_data
         
     try:
@@ -117,6 +141,10 @@ def get_match_data(url):
     try:
         props = data.get('props', {})
         page_props = props.get('pageProps', {})
+        
+        # Debug structure
+        print(f"DEBUG: Found pageProps keys: {list(page_props.keys())}")
+        
         scorecard = page_props.get('scorecard', [])
         
         # Defensive extraction for summaryData
