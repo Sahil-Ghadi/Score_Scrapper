@@ -34,18 +34,9 @@ def apply_stealth(page):
     """)
 
 def get_match_data(url):
-    # Data packet default structure
-    empty_data = {'scorecard': [], 'meta': {
-        'result': 'Error', 
-        'man_of_the_match': 'N/A', 
-        'match_overs': 'N/A', 
-        'tournament_name': 'N/A'
-    }}
-
-    print("Launching browser for scraping...")
     with sync_playwright() as p:
-        # Add args to help with sandbox issues in some environments like Streamlit Cloud
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
+        print("Launching browser for scraping...")
+        browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             viewport={'width': 1920, 'height': 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -53,98 +44,50 @@ def get_match_data(url):
         page = context.new_page()
         apply_stealth(page)
         
-        print(f"Navigating to initial URL: {url}...")
+        print(f"Navigating to {url}...")
         try:
-            response = page.goto(url, timeout=60000, wait_until='domcontentloaded')
-            if not response:
-                print("No response from page.")
-            time.sleep(5) # Allow some JS to hydrate headers
+            page.goto(url, timeout=90000, wait_until='domcontentloaded')
+            time.sleep(5)
+            content = page.content()
+            
+            soup = BeautifulSoup(content, 'html.parser')
+            canonical = soup.find('link', rel='canonical')
+            
+            if canonical and canonical.get('href'):
+                real_url = canonical.get('href')
+                # If we are not on the scorecard page, switch to it
+                if '/summary' in real_url:
+                    real_url = real_url.replace('/summary','/scorecard')
+                    print(f"Redirecting to real URL: {real_url}")
+                    page.goto(real_url, timeout=90000, wait_until='domcontentloaded')
+                    time.sleep(5)
+                    content = page.content()
+            else:
+                 print("Canonical tag not found, using current page content.")
+
         except Exception as e:
-            print(f"Error loading initial page: {e}")
+            print(f"Navigation error: {e}")
             browser.close()
-            return empty_data
-
-        # Attempt to get canonical URL directly from DOM
-        canonical_href = page.evaluate("() => document.querySelector('link[rel=\"canonical\"]')?.href")
-        
-        if canonical_href:
-            print(f"Canonical URL found: {canonical_href}")
-            real_url = canonical_href.replace('/summary','/scorecard')
-        else:
-            print("Canonical link not found. Using current URL.")
-            real_url = page.url
-            # Helper: if user gave a summary url, force swap even if canonical missing
-            if '/summary' in real_url:
-                real_url = real_url.replace('/summary', '/scorecard')
-
-        print(f"Targeting Final URL: {real_url}")
-        
-        # ... navigation logic ...
-        # Determine if we need to navigate again
-        current_url = page.url
-        # Check simplified versions of URLs to avoid unnecessary reloads
-        if current_url.split('?')[0] != real_url.split('?')[0]:
-            print(f"Navigating to {real_url}...")
-            try:
-                page.goto(real_url, timeout=60000, wait_until='domcontentloaded')
-                
-                # Try to wait for the critical data tag, just in case
-                try:
-                    page.wait_for_selector('script[id="__NEXT_DATA__"]', timeout=5000)
-                except:
-                    print("Warning: Timed out waiting for __NEXT_DATA__ selector.")
-
-                time.sleep(2)
-            except Exception as e:
-                print(f"Error loading final scorecard page: {e}")
-                browser.close()
-                return empty_data
-        else:
-            print("Already on the correct page.")
-        
-        content = page.content()
-        page_title = page.title()
+            raise e
+            
         browser.close()
         
-    print(f"DEBUG: Final Page Title: {page_title}")
-    
-    # Save debug file for inspection
-    try:
-        with open("debug_last_scrape.html", "w", encoding="utf-8") as f:
-            f.write(content)
-        print("DEBUG: Saved page content to debug_last_scrape.html")
-    except Exception as e:
-        print(f"Warning: Could not save debug HTML: {e}")
-
     soup = BeautifulSoup(content, 'html.parser')
 
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
-        print("Detailed Error: Could not find __NEXT_DATA__ script tag.")
-        # Bot detection check
-        text_preview = soup.get_text()[:500].lower()
-        if "challenge" in text_preview or "security" in text_preview:
-            print("CRITICAL: Detected potential security challenge/blocking.")
-        elif "enable javascript" in text_preview:
-            print("CRITICAL: Page requesting JS enable (possible scraped mode detection).")
-        
-        return empty_data
-        
+        raise Exception("Could not find __NEXT_DATA__ script tag. The page might calculate content dynamically or bot protection blocked access.")
+    
     try:
         data = json.loads(next_data_script.string)
     except json.JSONDecodeError:
-        print("Error: Failed to parse __NEXT_DATA__ JSON.")
-        return empty_data
+        raise Exception("Failed to parse __NEXT_DATA__ JSON.")
 
     # Navigate to the summary data
     try:
         props = data.get('props', {})
         page_props = props.get('pageProps', {})
-        
-        # Debug structure
-        print(f"DEBUG: Found pageProps keys: {list(page_props.keys())}")
-        
         scorecard = page_props.get('scorecard', [])
         
         # Defensive extraction for summaryData
@@ -176,7 +119,7 @@ def get_match_data(url):
     except Exception as e:
         print(f"Error extracting meta data: {e}")
         # Fallback if extraction fails
-        scorecard = data.get('props', {}).get('pageProps', {}).get('scorecard', [])
+        scorecard = []
         meta_info = {
             'result': 'Match Ended',
             'man_of_the_match': 'N/A',
