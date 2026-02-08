@@ -81,13 +81,29 @@ def get_match_data(url):
     data = json.loads(next_data_script.string)
     # Navigate to the summary data
     try:
-        page_props = data['props']['pageProps']
-        scorecard = page_props['scorecard']
-        summary_data = page_props.get('summaryData', {}).get('data', {})
+    # Navigate to the summary data
+    try:
+        props = data.get('props', {})
+        page_props = props.get('pageProps', {})
+        scorecard = page_props.get('scorecard', [])
+        
+        # Defensive extraction for summaryData
+        summary_obj = page_props.get('summaryData')
+        if summary_obj is None: 
+            summary_obj = {}
+        summary_data = summary_obj.get('data')
+        if summary_data is None: 
+            summary_data = {}
         
         # Extract specific meta fields from summaryData
-        match_summary = summary_data.get('match_summary', {})
-        player_of_match = summary_data.get('player_of_the_match', {})
+        match_summary = summary_data.get('match_summary')
+        if match_summary is None: 
+            match_summary = {}
+            
+        player_of_match = summary_data.get('player_of_the_match')
+        if player_of_match is None: 
+            player_of_match = {}
+            
         tournament_name_str = summary_data.get('tournament_name', 'N/A')
         
         meta_info = {
@@ -97,8 +113,16 @@ def get_match_data(url):
             'tournament_name': tournament_name_str
         }
 
-    except KeyError:
-        raise Exception("JSON structure changed, could not find summaryData.")
+    except Exception as e:
+        print(f"Error extracting meta data: {e}")
+        # Fallback if extraction fails
+        scorecard = data.get('props', {}).get('pageProps', {}).get('scorecard', [])
+        meta_info = {
+            'result': 'Match Ended',
+            'man_of_the_match': 'N/A',
+            'match_overs': 'N/A',
+            'tournament_name': 'N/A'
+        }
         
     return {'scorecard': scorecard, 'meta': meta_info}
 
