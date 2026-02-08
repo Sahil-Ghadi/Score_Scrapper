@@ -8,12 +8,27 @@ import subprocess
 
 # Function to install playwright browsers
 @st.cache_resource
-def install_playwright_browsers():
+def install_dependencies():
+    print("Checking and installing dependencies...")
+    try:
+        import playwright
+        print("Playwright is already installed.")
+    except ImportError:
+        print("Playwright not found. Installing dependencies...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "playwright", "beautifulsoup4", "python-dotenv"], capture_output=True)
+
     print("Installing Playwright browsers...")
-    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
+    try:
+        process = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], capture_output=True, text=True)
+        if process.returncode != 0:
+             print(f"Error installing browsers: {process.stderr}")
+        else:
+             print("Browsers installed successfully.")
+    except Exception as e:
+        print(f"Exception installing browsers: {e}")
 
 # Run installation
-install_playwright_browsers()
+install_dependencies()
 
 # Fix for Windows event loop policy
 if sys.platform.startswith("win"):

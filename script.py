@@ -36,7 +36,19 @@ def apply_stealth(page):
 def get_match_data(url):
     with sync_playwright() as p:
         print("Launching browser for scraping...")
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu'
+            ]
+        )
         context = browser.new_context(
             viewport={'width': 1920, 'height': 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -46,22 +58,34 @@ def get_match_data(url):
         
         print(f"Navigating to {url}...")
         try:
-            page.goto(url, timeout=90000, wait_until='domcontentloaded')
+            response = page.goto(url, timeout=90000, wait_until='networkidle')
             time.sleep(5)
             content = page.content()
+            print(f"Initial Page Title: {page.title()}")
+            print(f"Initial Page URL: {page.url}")
+            
+            # Handle potential redirect via canonical or meta refresh manually if needed, 
+            # though Playwright follows HTTP redirects.
             
             soup = BeautifulSoup(content, 'html.parser')
             canonical = soup.find('link', rel='canonical')
             
             if canonical and canonical.get('href'):
                 real_url = canonical.get('href')
-                # If we are not on the scorecard page, switch to it
+                print(f"Found canonical URL: {real_url}")
+                
+                # Logic to ensure we are on the scorecard page
                 if '/summary' in real_url:
-                    real_url = real_url.replace('/summary','/scorecard')
-                    print(f"Redirecting to real URL: {real_url}")
-                    page.goto(real_url, timeout=90000, wait_until='domcontentloaded')
+                    target_url = real_url.replace('/summary','/scorecard')
+                    print(f"Redirecting to scorecard URL: {target_url}")
+                    page.goto(target_url, timeout=90000, wait_until='networkidle')
                     time.sleep(5)
                     content = page.content()
+                    print(f"Final Page URL: {page.url}")
+                elif '/scorecard' not in page.url and '/scorecard' in real_url:
+                     # If current URL is short link and canonical is scorecard, maybe we made it, maybe not.
+                     # But if we are here, we might want to ensure we are on the canonical one if the short link displayed an interstitial.
+                     pass 
             else:
                  print("Canonical tag not found, using current page content.")
 
@@ -77,7 +101,19 @@ def get_match_data(url):
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
-        raise Exception("Could not find __NEXT_DATA__ script tag. The page might calculate content dynamically or bot protection blocked access.")
+        print("Warning: __NEXT_DATA__ not found. Possible bot protection or loading delay. Retrying with reload...")
+        time.sleep(5)
+        page.reload(timeout=60000, wait_until='networkidle')
+        content = page.content()
+        soup = BeautifulSoup(content, 'html.parser')
+        next_data_script = soup.find('script', id='__NEXT_DATA__')
+        
+        if not next_data_script:
+            # Debugging: Save the HTML to a file
+            with open("debug_page.html", "w", encoding="utf-8") as f:
+                f.write(content)
+            print("Error: __NEXT_DATA__ tag not found after retry. Saved page content to debug_page.html")
+            raise Exception("Could not find __NEXT_DATA__ script tag. The page might calculate content dynamically or bot protection blocked access.")
     
     try:
         data = json.loads(next_data_script.string)

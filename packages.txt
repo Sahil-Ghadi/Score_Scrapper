@@ -1,4 +1,4 @@
-chromium
+
 libnss3
 libx11-6
 libx11-xcb1
