@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import json
 import time
 import os
+import requests
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -34,27 +35,11 @@ def apply_stealth(page):
     """)
 
 def get_match_data(url):
-    with sync_playwright() as p:
-        print("Launching browser for scraping...")
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-        apply_stealth(page)
-        
-        print(f"Navigating to {url}...")
-        page.goto(url, timeout=90000, wait_until='domcontentloaded')
-        time.sleep(5)
-        content = page.content()
-        browser.close()
-        
-    soup = BeautifulSoup(content, 'html.parser')
-    canonical = soup.find('link', rel='canonical')
-    real_url = canonical.get('href')
-    real_url = real_url.replace('/summary','/scorecard')
-    
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    real_url = soup.find("meta", property="og:url")['content']
+    real_url = str(real_url)+'/scorecard'
+    print(real_url)
     with sync_playwright() as p:
         print("Launching browser for scraping...")
         browser = p.chromium.launch(headless=True)
@@ -79,8 +64,6 @@ def get_match_data(url):
         raise Exception("Could not find __NEXT_DATA__ script tag.")
         
     data = json.loads(next_data_script.string)
-    # Navigate to the summary data
-    try:
     # Navigate to the summary data
     try:
         props = data.get('props', {})
