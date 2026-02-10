@@ -14,24 +14,40 @@ def apply_stealth(page):
     Manually apply stealth scripts to bypass bot detection.
     """
     page.add_init_script("""
+        // Pass the Webdriver Test.
         Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
+            get: () => undefined,
         });
     """)
     page.add_init_script("""
+        // Pass the Chrome Test.
         window.chrome = {
-            runtime: {}
+            runtime: {},
+            // loadTimes: function() {},
+            // csi: function() {},
+            // app: {},
         };
     """)
     page.add_init_script("""
+        // Pass the Plugins Length Test.
         Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
+            get: () => [1, 2, 3, 4, 5],
         });
     """)
     page.add_init_script("""
+        // Pass the Languages Test.
         Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en']
+            get: () => ['en-US', 'en'],
         });
+    """)
+    page.add_init_script("""
+        // Pass the Permissions Test.
+        const originalQuery = window.navigator.permissions.query;
+        return (window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+            Promise.resolve({ state: 'denied' }) :
+            originalQuery(parameters)
+        ));
     """)
 
 def get_match_data(url):
@@ -63,7 +79,6 @@ def get_match_data(url):
 
     # Strategy 2: Use Playwright with Stealth if requests failed
     if not content:
-        from playwright_stealth import stealth_sync
         
         with sync_playwright() as p:
             print("Launching browser for scraping (Playwright)...")
@@ -84,9 +99,8 @@ def get_match_data(url):
             )
             page = context.new_page()
             
-            # Apply stealth
-            stealth_sync(page)
-            # apply_stealth(page) # using the library instead of manual function
+            # Apply stealth manually
+            apply_stealth(page)
             
             print(f"Navigating to {real_url}...")
             # Increased timeout and wait condition
