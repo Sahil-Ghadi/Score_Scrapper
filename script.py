@@ -4,7 +4,7 @@ import json
 import time
 import os
 import requests
-import cloudscraper
+
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -58,19 +58,24 @@ def get_match_data(url):
     real_url = str(real_url) + '/scorecard'
     print(real_url)
 
-    print(f"Attempting to fetch with cloudscraper: {real_url}")
+    print(f"Attempting to fetch with requests: {real_url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/"
+    }
 
     try:
-        scraper = cloudscraper.create_scraper()
-        r2 = scraper.get(real_url, timeout=15)
+        r2 = requests.get(real_url, headers=headers, timeout=10)
         if r2.status_code == 200 and "__NEXT_DATA__" in r2.text:
-            print("Successfully fetched with cloudscraper!")
+            print("Successfully fetched with requests!")
             content = r2.text
         else:
-            print("Cloudscraper failed. Falling back to Playwright.")
+            print(f"Requests failed (Status: {r2.status_code}) or NEXT_DATA missing. Falling back to Playwright.")
             content = None
     except Exception as e:
-        print(f"Cloudscraper error: {e}")
+        print(f"Requests fallback error: {e}")
         content = None
 
     # 👇 THIS BLOCK MUST BE INSIDE THE FUNCTION
