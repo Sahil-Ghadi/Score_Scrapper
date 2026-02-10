@@ -40,21 +40,70 @@ def get_match_data(url):
     real_url = soup.find("meta", property="og:url")['content']
     real_url = str(real_url)+'/scorecard'
     print(real_url)
-    with sync_playwright() as p:
-        print("Launching browser for scraping...")
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-        apply_stealth(page)
+    # Strategy 1: Attempt using requests (Faster, much lighter)
+    print(f"Attempting to fetch with requests: {real_url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/"
+    }
+    
+    try:
+        r2 = requests.get(real_url, headers=headers, timeout=10)
+        if r2.status_code == 200 and "__NEXT_DATA__" in r2.text:
+            print("Successfully fetched with requests!")
+            content = r2.text
+        else:
+            print(f"Requests failed (Status: {r2.status_code}) or NEXT_DATA missing. Falling back to Playwright.")
+            content = None
+    except Exception as e:
+        print(f"Requests fallback error: {e}")
+        content = None
+
+    # Strategy 2: Use Playwright with Stealth if requests failed
+    if not content:
+        from playwright_stealth import stealth_sync
         
-        print(f"Navigating to {real_url}...")
-        page.goto(real_url, timeout=90000, wait_until='domcontentloaded')
-        time.sleep(5)
-        content = page.content()
-        browser.close()
+        with sync_playwright() as p:
+            print("Launching browser for scraping (Playwright)...")
+            # Add arguments for better cloud compatibility
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--disable-setuid-sandbox',
+                    '--no-sandbox',
+                    '--single-process' # Often helps in restricted envs
+                ]
+            )
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            
+            # Apply stealth
+            stealth_sync(page)
+            # apply_stealth(page) # using the library instead of manual function
+            
+            print(f"Navigating to {real_url}...")
+            # Increased timeout and wait condition
+            try:
+                page.goto(real_url, timeout=60000, wait_until='domcontentloaded')
+                # Wait for the script tag specifically
+                try:
+                    page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=10000)
+                except:
+                    print("Timeout waiting for selector, proceeding to capture content anyway...")
+                    
+                content = page.content()
+            except Exception as e:
+                print(f"Playwright navigation error: {e}")
+                content = page.content() # Try to get what we have
+            finally:
+                browser.close()
         
     soup = BeautifulSoup(content, 'html.parser')
 
@@ -439,7 +488,7 @@ def generate_pdf(data_packet, output_file="scorecard.pdf"):
 def run():
     url = os.getenv("MATCH_URL")
     if not url:
-        print("Error: MATCH_URL environment variable not set.")
+        print("Error: MATCH_URL environment variable not set. Please set it in .env file.")
         return
         
     try:
