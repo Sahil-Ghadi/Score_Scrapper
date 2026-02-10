@@ -124,7 +124,10 @@ def get_match_data(url):
     # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
-        raise Exception("Could not find __NEXT_DATA__ script tag.")
+        # Debugging: Return what we found instead of just raising generic error
+        page_title = soup.title.string if soup.title else "No Title"
+        html_snippet = soup.prettify()[:1000] # First 1000 chars
+        raise Exception(f"Could not find __NEXT_DATA__ script tag. Page Title: {page_title}. HTML Snippet: {html_snippet}")
         
     data = json.loads(next_data_script.string)
     # Navigate to the summary data
