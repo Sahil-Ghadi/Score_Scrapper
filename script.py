@@ -55,116 +55,89 @@ def get_match_data(url):
     r = requests.get(url)
     soup = BeautifulSoup(r.text, "html.parser")
     real_url = soup.find("meta", property="og:url")['content']
-    real_url = str(real_url)+'/scorecard'
+    real_url = str(real_url) + '/scorecard'
     print(real_url)
-    # Strategy 1: Attempt using cloudscraper (Bypasses Cloudflare)
+
     print(f"Attempting to fetch with cloudscraper: {real_url}")
-    
+
     try:
-        scraper = cloudscraper.create_scraper() # returns a CloudScraper instance
+        scraper = cloudscraper.create_scraper()
         r2 = scraper.get(real_url, timeout=15)
         if r2.status_code == 200 and "__NEXT_DATA__" in r2.text:
             print("Successfully fetched with cloudscraper!")
             content = r2.text
         else:
-            print(f"Cloudscraper failed (Status: {r2.status_code}) or NEXT_DATA missing. Falling back to Playwright.")
+            print("Cloudscraper failed. Falling back to Playwright.")
             content = None
     except Exception as e:
-        print(f"Cloudscraper fallback error: {e}")
+        print(f"Cloudscraper error: {e}")
         content = None
 
-    # Strategy 2: Use Playwright with Stealth if requests failed
-if not content:
-    with sync_playwright() as p:
-        print("Launching browser for scraping (Playwright)...")
+    # 👇 THIS BLOCK MUST BE INSIDE THE FUNCTION
+    if not content:
+        with sync_playwright() as p:
+            print("Launching browser for scraping...")
 
-        context = p.chromium.launch_persistent_context(
-            user_data_dir="./userdata",
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-blink-features=AutomationControlled'
-            ]
-        )
+            context = p.chromium.launch_persistent_context(
+                user_data_dir="./userdata",
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-blink-features=AutomationControlled'
+                ]
+            )
 
-        page = context.new_page()
-        apply_stealth(page)
+            page = context.new_page()
+            apply_stealth(page)
 
-        print(f"Navigating to {real_url}...")
+            for attempt in range(3):
+                try:
+                    page.goto(real_url, timeout=60000, wait_until="networkidle")
+                    break
+                except:
+                    time.sleep(2)
 
-        for attempt in range(3):
             try:
-                page.goto(real_url, timeout=60000, wait_until="networkidle")
-                break
+                page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=15000)
             except:
-                print("Retrying navigation...")
-                time.sleep(2)
+                print("NEXT_DATA not detected.")
 
-        try:
-            page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=15000)
-        except:
-            print("NEXT_DATA not detected, capturing anyway...")
+            content = page.content()
+            context.close()
 
-        content = page.content()
-        context.close()
-        
     soup = BeautifulSoup(content, 'html.parser')
 
-    # Extract the __NEXT_DATA__ JSON blob
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     if not next_data_script:
-        # Debugging: Return what we found instead of just raising generic error
         page_title = soup.title.string if soup.title else "No Title"
-        html_snippet = soup.prettify()[:1000] # First 1000 chars
-        raise Exception(f"Could not find __NEXT_DATA__ script tag. Page Title: {page_title}. HTML Snippet: {html_snippet}")
-        
+        html_snippet = soup.prettify()[:1000]
+        raise Exception(f"Could not find __NEXT_DATA__. Title: {page_title}")
+
     data = json.loads(next_data_script.string)
-    # Navigate to the summary data
+
     try:
         props = data.get('props', {})
         page_props = props.get('pageProps', {})
         scorecard = page_props.get('scorecard', [])
-        
-        # Defensive extraction for summaryData
-        summary_obj = page_props.get('summaryData')
-        if summary_obj is None: 
-            summary_obj = {}
-        summary_data = summary_obj.get('data')
-        if summary_data is None: 
-            summary_data = {}
-        
-        # Extract specific meta fields from summaryData
-        match_summary = summary_data.get('match_summary')
-        if match_summary is None: 
-            match_summary = {}
-            
-        player_of_match = summary_data.get('player_of_the_match')
-        if player_of_match is None: 
-            player_of_match = {}
-            
-        tournament_name_str = summary_data.get('tournament_name', 'N/A')
-        
+
+        summary_data = page_props.get('summaryData', {}).get('data', {})
+
         meta_info = {
-            'result': match_summary.get('summary', 'Match Ended'),
-            'man_of_the_match': player_of_match.get('player_name', 'N/A'),
+            'result': summary_data.get('match_summary', {}).get('summary', 'Match Ended'),
+            'man_of_the_match': summary_data.get('player_of_the_match', {}).get('player_name', 'N/A'),
             'match_overs': summary_data.get('overs', 'N/A'),
-            'tournament_name': tournament_name_str
+            'tournament_name': summary_data.get('tournament_name', 'N/A')
         }
 
     except Exception as e:
-        print(f"Error extracting meta data: {e}")
-        # Fallback if extraction fails
-        scorecard = data.get('props', {}).get('pageProps', {}).get('scorecard', [])
-        meta_info = {
-            'result': 'Match Ended',
-            'man_of_the_match': 'N/A',
-            'match_overs': 'N/A',
-            'tournament_name': 'N/A'
-        }
-        
+        print(f"Meta extraction error: {e}")
+        scorecard = []
+        meta_info = {}
+
     return {'scorecard': scorecard, 'meta': meta_info}
+
 
 def generate_pdf(data_packet, output_file="scorecard.pdf"):
     match_data = data_packet.get('scorecard', [])
