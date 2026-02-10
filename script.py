@@ -4,6 +4,7 @@ import json
 import time
 import os
 import requests
+import cloudscraper
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -56,25 +57,20 @@ def get_match_data(url):
     real_url = soup.find("meta", property="og:url")['content']
     real_url = str(real_url)+'/scorecard'
     print(real_url)
-    # Strategy 1: Attempt using requests (Faster, much lighter)
-    print(f"Attempting to fetch with requests: {real_url}")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/"
-    }
+    # Strategy 1: Attempt using cloudscraper (Bypasses Cloudflare)
+    print(f"Attempting to fetch with cloudscraper: {real_url}")
     
     try:
-        r2 = requests.get(real_url, headers=headers, timeout=10)
+        scraper = cloudscraper.create_scraper() # returns a CloudScraper instance
+        r2 = scraper.get(real_url, timeout=15)
         if r2.status_code == 200 and "__NEXT_DATA__" in r2.text:
-            print("Successfully fetched with requests!")
+            print("Successfully fetched with cloudscraper!")
             content = r2.text
         else:
-            print(f"Requests failed (Status: {r2.status_code}) or NEXT_DATA missing. Falling back to Playwright.")
+            print(f"Cloudscraper failed (Status: {r2.status_code}) or NEXT_DATA missing. Falling back to Playwright.")
             content = None
     except Exception as e:
-        print(f"Requests fallback error: {e}")
+        print(f"Cloudscraper fallback error: {e}")
         content = None
 
     # Strategy 2: Use Playwright with Stealth if requests failed
@@ -90,7 +86,8 @@ def get_match_data(url):
                     '--disable-dev-shm-usage',
                     '--disable-setuid-sandbox',
                     '--no-sandbox',
-                    '--single-process' # Often helps in restricted envs
+                    '--single-process',
+                    '--disable-blink-features=AutomationControlled' # Hides webdriver flag
                 ]
             )
             context = browser.new_context(
