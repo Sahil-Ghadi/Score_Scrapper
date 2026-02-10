@@ -74,47 +74,41 @@ def get_match_data(url):
         content = None
 
     # Strategy 2: Use Playwright with Stealth if requests failed
-    if not content:
-        
-        with sync_playwright() as p:
-            print("Launching browser for scraping (Playwright)...")
-            # Add arguments for better cloud compatibility
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage',
-                    '--disable-setuid-sandbox',
-                    '--no-sandbox',
-                    '--single-process',
-                    '--disable-blink-features=AutomationControlled' # Hides webdriver flag
-                ]
-            )
-            context = p.chromium.launch_persistent_context(
-                user_data_dir="./userdata",
-                headless=True
-            )
-            page = context.new_page()
-            
-            # Apply stealth manually
-            apply_stealth(page)
-            
-            print(f"Navigating to {real_url}...")
-            # Increased timeout and wait condition
+if not content:
+    with sync_playwright() as p:
+        print("Launching browser for scraping (Playwright)...")
+
+        context = p.chromium.launch_persistent_context(
+            user_data_dir="./userdata",
+            headless=True,
+            args=[
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-blink-features=AutomationControlled'
+            ]
+        )
+
+        page = context.new_page()
+        apply_stealth(page)
+
+        print(f"Navigating to {real_url}...")
+
+        for attempt in range(3):
             try:
-                page.goto(real_url, timeout=60000, wait_until='domcontentloaded')
-                # Wait for the script tag specifically
-                try:
-                    page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=10000)
-                except:
-                    print("Timeout waiting for selector, proceeding to capture content anyway...")
-                    
-                content = page.content()
-            except Exception as e:
-                print(f"Playwright navigation error: {e}")
-                content = page.content() # Try to get what we have
-            finally:
-                browser.close()
+                page.goto(real_url, timeout=60000, wait_until="networkidle")
+                break
+            except:
+                print("Retrying navigation...")
+                time.sleep(2)
+
+        try:
+            page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=15000)
+        except:
+            print("NEXT_DATA not detected, capturing anyway...")
+
+        content = page.content()
+        context.close()
         
     soup = BeautifulSoup(content, 'html.parser')
 
