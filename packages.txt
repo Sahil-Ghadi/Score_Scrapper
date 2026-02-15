@@ -17,3 +17,6 @@ fonts-liberation
 libappindicator1
 libasound2
 xdg-utils
+libxml2-dev
+libxslt1-dev
+build-essential
