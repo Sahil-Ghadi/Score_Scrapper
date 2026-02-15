@@ -4,7 +4,6 @@ import json
 import time
 import os
 import requests
-
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -12,7 +11,7 @@ load_dotenv()
 
 def apply_stealth(page):
     """
-    Manually apply stealth scripts to bypass bot detection.
+    Enhanced stealth scripts to bypass bot detection.
     """
     page.add_init_script("""
         // Pass the Webdriver Test.
@@ -24,9 +23,6 @@ def apply_stealth(page):
         // Pass the Chrome Test.
         window.chrome = {
             runtime: {},
-            // loadTimes: function() {},
-            // csi: function() {},
-            // app: {},
         };
     """)
     page.add_init_script("""
@@ -42,82 +38,192 @@ def apply_stealth(page):
         });
     """)
     page.add_init_script("""
+        // Overwrite the `platform` property.
+        Object.defineProperty(navigator, 'platform', {
+            get: () => 'Win32',
+        });
+    """)
+    page.add_init_script("""
+        // Overwrite the `hardwareConcurrency` property.
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 8,
+        });
+    """)
+    page.add_init_script("""
         // Pass the Permissions Test.
         const originalQuery = window.navigator.permissions.query;
-        return (window.navigator.permissions.query = (parameters) => (
+        window.navigator.permissions.query = (parameters) => (
             parameters.name === 'notifications' ?
             Promise.resolve({ state: 'denied' }) :
             originalQuery(parameters)
-        ));
+        );
     """)
 
 def get_match_data(url):
-    r = requests.get(url)
+    r = requests.get(url, timeout=10)
     soup = BeautifulSoup(r.text, "html.parser")
     real_url = soup.find("meta", property="og:url")['content']
     real_url = str(real_url) + '/scorecard'
-    print(real_url)
+    print(f"Target URL: {real_url}")
 
-    print(f"Attempting to fetch with requests: {real_url}")
+    # Enhanced headers to look more like a real browser
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/"
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
+        "Referer": "https://www.google.com/",
+        "sec-ch-ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"'
     }
 
+    content = None
+    
+    # Try with requests first (fast path)
+    print("Attempting to fetch with requests...")
     try:
-        r2 = requests.get(real_url, headers=headers, timeout=10)
+        session = requests.Session()
+        # First request to get cookies
+        session.get("https://www.google.com/", timeout=10)
+        time.sleep(1)
+        
+        r2 = session.get(real_url, headers=headers, timeout=15)
         if r2.status_code == 200 and "__NEXT_DATA__" in r2.text:
-            print("Successfully fetched with requests!")
+            print("✓ Successfully fetched with requests!")
             content = r2.text
         else:
-            print(f"Requests failed (Status: {r2.status_code}) or NEXT_DATA missing. Falling back to Playwright.")
-            content = None
+            print(f"✗ Requests failed (Status: {r2.status_code}). Falling back to Playwright.")
     except Exception as e:
-        print(f"Requests fallback error: {e}")
-        content = None
+        print(f"✗ Requests error: {e}")
 
-    # 👇 THIS BLOCK MUST BE INSIDE THE FUNCTION
+    # Fallback to Playwright with enhanced stealth
     if not content:
+        print("Launching browser with stealth mode...")
+        
         with sync_playwright() as p:
-            print("Launching browser for scraping...")
-
-            context = p.chromium.launch_persistent_context(
-                user_data_dir="./userdata",
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-blink-features=AutomationControlled'
-                ]
-            )
-
-            page = context.new_page()
-            apply_stealth(page)
-
-            for attempt in range(3):
-                try:
-                    page.goto(real_url, timeout=60000, wait_until="networkidle")
-                    break
-                except:
-                    time.sleep(2)
-
             try:
-                page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=15000)
-            except:
-                print("NEXT_DATA not detected.")
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-first-run',
+                        '--no-zygote',
+                        '--single-process',  # Important for Streamlit Cloud
+                        '--disable-gpu',
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-features=IsolateOrigins,site-per-process',
+                        '--disable-web-security'
+                    ]
+                )
+                
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                    locale='en-US',
+                    timezone_id='America/New_York',
+                    extra_http_headers={
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none'
+                    }
+                )
+                
+                page = context.new_page()
+                apply_stealth(page)
+                
+                # Visit Google first to look more human-like
+                print("Visiting Google first...")
+                try:
+                    page.goto("https://www.google.com/", timeout=30000, wait_until="domcontentloaded")
+                    time.sleep(2)
+                except Exception as e:
+                    print(f"Warning: Could not visit Google: {e}")
+                
+                # Now visit the target page
+                print("Navigating to target page...")
+                for attempt in range(3):
+                    try:
+                        page.goto(real_url, timeout=90000, wait_until="domcontentloaded")
+                        print(f"Page loaded (attempt {attempt + 1})")
+                        break
+                    except Exception as e:
+                        print(f"Navigation attempt {attempt + 1} failed: {e}")
+                        if attempt < 2:
+                            time.sleep(3)
+                        else:
+                            raise
+                
+                # Wait for Cloudflare to finish
+                print("Waiting for Cloudflare check...")
+                time.sleep(5)
+                
+                # Try to detect Cloudflare challenge
+                try:
+                    page.wait_for_selector("body", timeout=10000)
+                    page_text = page.content()
+                    
+                    if "Cloudflare" in page_text and "challenge" in page_text.lower():
+                        print("Cloudflare challenge detected. Waiting longer...")
+                        time.sleep(10)
+                except:
+                    pass
+                
+                # Wait for the data
+                print("Waiting for __NEXT_DATA__...")
+                try:
+                    page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=30000)
+                    print("✓ __NEXT_DATA__ found!")
+                except Exception as e:
+                    print(f"✗ __NEXT_DATA__ not found: {e}")
+                    # Take screenshot for debugging
+                    try:
+                        page.screenshot(path="debug_screenshot.png")
+                        print("Debug screenshot saved as debug_screenshot.png")
+                    except:
+                        pass
+                
+                content = page.content()
+                
+                context.close()
+                browser.close()
+                
+            except Exception as e:
+                print(f"Playwright error: {e}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(f"Failed to load page with Playwright: {e}")
 
-            content = page.content()
-            context.close()
+    if not content:
+        raise Exception("Failed to fetch content with both methods")
 
+    # Parse the content
     soup = BeautifulSoup(content, 'html.parser')
-
     next_data_script = soup.find('script', id='__NEXT_DATA__')
+    
     if not next_data_script:
         page_title = soup.title.string if soup.title else "No Title"
-        html_snippet = soup.prettify()[:1000]
+        print(f"Page title: {page_title}")
+        
+        # Save HTML for debugging
+        try:
+            with open("debug_page.html", "w", encoding="utf-8") as f:
+                f.write(soup.prettify()[:5000])
+            print("Debug HTML saved (first 5000 chars)")
+        except:
+            pass
+        
         raise Exception(f"Could not find __NEXT_DATA__. Title: {page_title}")
 
     data = json.loads(next_data_script.string)
@@ -155,10 +261,9 @@ def generate_pdf(data_packet, output_file="scorecard.pdf"):
         if match_data and len(match_data) > 0:
             start_time = match_data[0].get('inning', {}).get('inning_start_time', '')
             if start_time:
-                # Basic parsing, can be improved
                 date_part, time_part = start_time.split('T')
                 date_str = date_part
-                time_str = time_part[:5] # HH:MM
+                time_str = time_part[:5]
     except:
         pass
 
@@ -332,20 +437,16 @@ def generate_pdf(data_packet, output_file="scorecard.pdf"):
         score_str = inning_data.get('summary', {}).get('score', '0/0')
         overs_played = inning_data.get('summary', {}).get('over', '')
         
-        # Determine opponent name for "Bowling of..."
         opponent_index = 1 - i
         opponent_name = match_data[opponent_index].get('teamName', 'Opponent') if len(match_data) > 1 else "Opponent"
 
         # Batting Processing (Top 3)
         batters = inning.get('batting', [])
-        # Sort by runs descending
         batters.sort(key=lambda x: int(x.get('runs', 0)), reverse=True)
         top_batters = batters[:3]
 
         # Bowling Processing (Top 3)
-        # Find bowlers from this inning data (which lists bowlers against this batting team)
         bowlers = inning.get('bowling', [])
-        # Sort by wickets desc, then runs asc (economy implicit)
         bowlers.sort(key=lambda x: (int(x.get('wickets', 0)), -int(x.get('runs', 0))), reverse=True)
         top_bowlers = bowlers[:3]
 
@@ -462,14 +563,21 @@ def generate_pdf(data_packet, output_file="scorecard.pdf"):
     
     print("Generating PDF from HTML using Playwright...")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--single-process'
+            ]
+        )
         page = browser.new_page()
         page.set_content(html_content)
-        # Reduce margins to allow fitting on one page
         page.pdf(path=output_file, format="A4", print_background=True, margin={"top": "0.5cm", "right": "0.5cm", "bottom": "0.5cm", "left": "0.5cm"})
         browser.close()
     
-    print(f"PDF saved to {output_file}")
+    print(f"✓ PDF saved to {output_file}")
 
 def run():
     url = os.getenv("MATCH_URL")
@@ -478,13 +586,21 @@ def run():
         return
         
     try:
+        print("="*60)
+        print("Starting Cricket Scorecard Scraper")
+        print("="*60)
+        
         data_packet = get_match_data(url)
-        print("Data extraction successful.")
+        print("\n✓ Data extraction successful.")
         
         generate_pdf(data_packet, "scorecard.pdf")
         
+        print("\n" + "="*60)
+        print("Process completed successfully!")
+        print("="*60)
+        
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"\n✗ Error: {e}")
         import traceback
         traceback.print_exc()
 
