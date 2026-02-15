@@ -60,11 +60,27 @@ def apply_stealth(page):
     """)
 
 def get_match_data(url):
-    r = requests.get(url, timeout=10)
+    import sys
+    
+    print(f"[DEBUG] Starting get_match_data for URL: {url}", file=sys.stderr)
+    
+    try:
+        r = requests.get(url, timeout=10)
+        print(f"[DEBUG] Initial request status: {r.status_code}", file=sys.stderr)
+    except Exception as e:
+        print(f"[DEBUG] Initial request failed: {e}", file=sys.stderr)
+        raise
+    
     soup = BeautifulSoup(r.text, "html.parser")
-    real_url = soup.find("meta", property="og:url")['content']
+    og_url = soup.find("meta", property="og:url")
+    
+    if not og_url:
+        print(f"[DEBUG] No og:url meta tag found", file=sys.stderr)
+        raise Exception("Could not find match URL in page")
+    
+    real_url = og_url['content']
     real_url = str(real_url) + '/scorecard'
-    print(f"Target URL: {real_url}")
+    print(f"[DEBUG] Target scorecard URL: {real_url}", file=sys.stderr)
 
     # Enhanced headers to look more like a real browser
     headers = {
@@ -88,7 +104,7 @@ def get_match_data(url):
     content = None
     
     # Try with requests first (fast path)
-    print("Attempting to fetch with requests...")
+    print("[DEBUG] Attempting to fetch with requests...", file=sys.stderr)
     try:
         session = requests.Session()
         # First request to get cookies
@@ -96,20 +112,23 @@ def get_match_data(url):
         time.sleep(1)
         
         r2 = session.get(real_url, headers=headers, timeout=15)
+        print(f"[DEBUG] Requests response status: {r2.status_code}", file=sys.stderr)
+        
         if r2.status_code == 200 and "__NEXT_DATA__" in r2.text:
-            print("✓ Successfully fetched with requests!")
+            print("[DEBUG] ✓ Successfully fetched with requests!", file=sys.stderr)
             content = r2.text
         else:
-            print(f"✗ Requests failed (Status: {r2.status_code}). Falling back to Playwright.")
+            print(f"[DEBUG] ✗ Requests failed (Status: {r2.status_code}). Falling back to Playwright.", file=sys.stderr)
     except Exception as e:
-        print(f"✗ Requests error: {e}")
+        print(f"[DEBUG] ✗ Requests error: {e}", file=sys.stderr)
 
     # Fallback to Playwright with enhanced stealth
     if not content:
-        print("Launching browser with stealth mode...")
+        print("[DEBUG] Launching browser with stealth mode...", file=sys.stderr)
         
         with sync_playwright() as p:
             try:
+                print("[DEBUG] Starting Playwright browser launch...", file=sys.stderr)
                 browser = p.chromium.launch(
                     headless=True,
                     args=[
@@ -127,6 +146,7 @@ def get_match_data(url):
                     ]
                 )
                 
+                print("[DEBUG] Browser launched, creating context...", file=sys.stderr)
                 context = browser.new_context(
                     viewport={'width': 1920, 'height': 1080},
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
@@ -144,63 +164,87 @@ def get_match_data(url):
                 apply_stealth(page)
                 
                 # Visit Google first to look more human-like
-                print("Visiting Google first...")
+                print("[DEBUG] Visiting Google first...", file=sys.stderr)
                 try:
                     page.goto("https://www.google.com/", timeout=30000, wait_until="domcontentloaded")
                     time.sleep(2)
+                    print("[DEBUG] ✓ Google visit successful", file=sys.stderr)
                 except Exception as e:
-                    print(f"Warning: Could not visit Google: {e}")
+                    print(f"[DEBUG] Warning: Could not visit Google: {e}", file=sys.stderr)
                 
                 # Now visit the target page
-                print("Navigating to target page...")
+                print(f"[DEBUG] Navigating to target page: {real_url}", file=sys.stderr)
+                
+                navigation_success = False
                 for attempt in range(3):
                     try:
-                        page.goto(real_url, timeout=90000, wait_until="domcontentloaded")
-                        print(f"Page loaded (attempt {attempt + 1})")
+                        print(f"[DEBUG] Navigation attempt {attempt + 1}/3...", file=sys.stderr)
+                        page.goto(real_url, timeout=60000, wait_until="domcontentloaded")
+                        print(f"[DEBUG] ✓ Page loaded (attempt {attempt + 1})", file=sys.stderr)
+                        navigation_success = True
                         break
                     except Exception as e:
-                        print(f"Navigation attempt {attempt + 1} failed: {e}")
+                        print(f"[DEBUG] ✗ Navigation attempt {attempt + 1} failed: {e}", file=sys.stderr)
                         if attempt < 2:
                             time.sleep(3)
                         else:
-                            raise
+                            raise Exception(f"Failed to load page after 3 attempts: {e}")
+                
+                if not navigation_success:
+                    raise Exception("Failed to navigate to target page")
                 
                 # Wait for Cloudflare to finish
-                print("Waiting for Cloudflare check...")
+                print("[DEBUG] Waiting for Cloudflare check (5s)...", file=sys.stderr)
                 time.sleep(5)
                 
                 # Try to detect Cloudflare challenge
+                print("[DEBUG] Checking for Cloudflare challenge...", file=sys.stderr)
                 try:
                     page.wait_for_selector("body", timeout=10000)
                     page_text = page.content()
                     
                     if "Cloudflare" in page_text and "challenge" in page_text.lower():
-                        print("Cloudflare challenge detected. Waiting longer...")
+                        print("[DEBUG] ⚠️ Cloudflare challenge detected. Waiting longer...", file=sys.stderr)
                         time.sleep(10)
-                except:
-                    pass
+                    else:
+                        print("[DEBUG] ✓ No Cloudflare challenge detected", file=sys.stderr)
+                except Exception as e:
+                    print(f"[DEBUG] Error checking for Cloudflare: {e}", file=sys.stderr)
                 
                 # Wait for the data
-                print("Waiting for __NEXT_DATA__...")
+                print("[DEBUG] Waiting for __NEXT_DATA__...", file=sys.stderr)
                 try:
                     page.wait_for_selector("script[id='__NEXT_DATA__']", timeout=30000)
-                    print("✓ __NEXT_DATA__ found!")
+                    print("[DEBUG] ✓ __NEXT_DATA__ found!", file=sys.stderr)
                 except Exception as e:
-                    print(f"✗ __NEXT_DATA__ not found: {e}")
+                    print(f"[DEBUG] ✗ __NEXT_DATA__ not found: {e}", file=sys.stderr)
                     # Take screenshot for debugging
                     try:
-                        page.screenshot(path="debug_screenshot.png")
-                        print("Debug screenshot saved as debug_screenshot.png")
+                        screenshot_path = "debug_screenshot.png"
+                        page.screenshot(path=screenshot_path)
+                        print(f"[DEBUG] Debug screenshot saved as {screenshot_path}", file=sys.stderr)
                     except:
                         pass
+                    
+                    # Save page content
+                    try:
+                        page_content = page.content()
+                        if "cloudflare" in page_content.lower():
+                            raise Exception("Blocked by Cloudflare. The site is detecting automated access from Streamlit Cloud servers.")
+                        else:
+                            raise Exception("Could not find match data. The page structure may have changed.")
+                    except Exception as inner_e:
+                        raise inner_e
                 
                 content = page.content()
+                print(f"[DEBUG] ✓ Content retrieved: {len(content)} characters", file=sys.stderr)
                 
                 context.close()
                 browser.close()
+                print("[DEBUG] Browser closed", file=sys.stderr)
                 
             except Exception as e:
-                print(f"Playwright error: {e}")
+                print(f"[DEBUG] ✗ Playwright error: {e}", file=sys.stderr)
                 import traceback
                 traceback.print_exc()
                 raise Exception(f"Failed to load page with Playwright: {e}")
@@ -208,24 +252,26 @@ def get_match_data(url):
     if not content:
         raise Exception("Failed to fetch content with both methods")
 
+    print("[DEBUG] Parsing HTML content...", file=sys.stderr)
     # Parse the content
     soup = BeautifulSoup(content, 'html.parser')
     next_data_script = soup.find('script', id='__NEXT_DATA__')
     
     if not next_data_script:
         page_title = soup.title.string if soup.title else "No Title"
-        print(f"Page title: {page_title}")
+        print(f"[DEBUG] ✗ Could not find __NEXT_DATA__. Page title: {page_title}", file=sys.stderr)
         
         # Save HTML for debugging
         try:
             with open("debug_page.html", "w", encoding="utf-8") as f:
                 f.write(soup.prettify()[:5000])
-            print("Debug HTML saved (first 5000 chars)")
+            print("[DEBUG] Debug HTML saved (first 5000 chars)", file=sys.stderr)
         except:
             pass
         
-        raise Exception(f"Could not find __NEXT_DATA__. Title: {page_title}")
+        raise Exception(f"Could not find match data in page. Title: {page_title}")
 
+    print("[DEBUG] Parsing JSON data...", file=sys.stderr)
     data = json.loads(next_data_script.string)
 
     try:
@@ -241,9 +287,11 @@ def get_match_data(url):
             'match_overs': summary_data.get('overs', 'N/A'),
             'tournament_name': summary_data.get('tournament_name', 'N/A')
         }
+        
+        print(f"[DEBUG] ✓ Data extracted successfully. Scorecard length: {len(scorecard)}", file=sys.stderr)
 
     except Exception as e:
-        print(f"Meta extraction error: {e}")
+        print(f"[DEBUG] ✗ Meta extraction error: {e}", file=sys.stderr)
         scorecard = []
         meta_info = {}
 
@@ -561,23 +609,46 @@ def generate_pdf(data_packet, output_file="scorecard.pdf"):
     </html>
     """
     
-    print("Generating PDF from HTML using Playwright...")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--single-process'
-            ]
-        )
-        page = browser.new_page()
-        page.set_content(html_content)
-        page.pdf(path=output_file, format="A4", print_background=True, margin={"top": "0.5cm", "right": "0.5cm", "bottom": "0.5cm", "left": "0.5cm"})
-        browser.close()
-    
-    print(f"✓ PDF saved to {output_file}")
+    print("Generating PDF from HTML...")
+    try:
+        # Try using weasyprint first (more reliable on cloud)
+        try:
+            from weasyprint import HTML
+            print("Using WeasyPrint for PDF generation...")
+            HTML(string=html_content).write_pdf(output_file)
+            print(f"✓ PDF saved to {output_file}")
+            return
+        except ImportError:
+            print("WeasyPrint not available, using Playwright...")
+        
+        # Fallback to Playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--single-process',
+                    '--disable-gpu'
+                ]
+            )
+            page = browser.new_page()
+            page.set_content(html_content, wait_until="networkidle")
+            page.pdf(
+                path=output_file, 
+                format="A4", 
+                print_background=True, 
+                margin={"top": "0.5cm", "right": "0.5cm", "bottom": "0.5cm", "left": "0.5cm"}
+            )
+            browser.close()
+        
+        print(f"✓ PDF saved to {output_file}")
+    except Exception as e:
+        print(f"✗ PDF generation error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 def run():
     url = os.getenv("MATCH_URL")

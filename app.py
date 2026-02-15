@@ -129,8 +129,33 @@ if submitted:
                 status_text.info("🕷️ Scraping match data (this may take 30-60 seconds)...")
                 progress_bar.progress(20, text="Scraping data...")
                 
+                # Create an expander to show logs
+                with st.expander("🔍 View scraping progress (for debugging)", expanded=True):
+                    log_placeholder = st.empty()
+                
                 # Call the scraping function
-                data_packet = get_match_data(match_url)
+                import io
+                import sys
+                from contextlib import redirect_stderr
+                
+                # Capture stderr to show progress
+                stderr_capture = io.StringIO()
+                
+                try:
+                    with redirect_stderr(stderr_capture):
+                        data_packet = get_match_data(match_url)
+                    
+                    # Show captured logs
+                    logs = stderr_capture.getvalue()
+                    if logs:
+                        log_placeholder.code(logs, language="log")
+                    
+                except Exception as scrape_error:
+                    # Show captured logs even on error
+                    logs = stderr_capture.getvalue()
+                    if logs:
+                        log_placeholder.code(logs, language="log")
+                    raise scrape_error
                 
                 progress_bar.progress(60, text="Data extracted!")
                 status_text.success("✅ Data extracted successfully!")
@@ -149,7 +174,24 @@ if submitted:
                 progress_bar.progress(70, text="Generating PDF...")
                 
                 output_filename = "scorecard.pdf"
-                generate_pdf(data_packet, output_filename)
+                
+                try:
+                    generate_pdf(data_packet, output_filename)
+                    
+                    # Verify PDF was created
+                    if not os.path.exists(output_filename):
+                        raise FileNotFoundError(f"PDF file was not created: {output_filename}")
+                    
+                    # Check file size
+                    file_size = os.path.getsize(output_filename)
+                    if file_size == 0:
+                        raise ValueError("PDF file is empty (0 bytes)")
+                    
+                    print(f"✓ PDF generated successfully: {file_size} bytes")
+                    
+                except Exception as pdf_error:
+                    st.error(f"❌ PDF Generation Failed: {str(pdf_error)}")
+                    raise
                 
                 progress_bar.progress(100, text="Complete!")
                 status_text.success("✅ Scorecard generated successfully!")
@@ -176,8 +218,21 @@ if submitted:
                 
                 # PDF Download
                 st.markdown("---")
+                
+                # Verify file exists before trying to read
+                if not os.path.exists(output_filename):
+                    st.error(f"❌ PDF file not found: {output_filename}")
+                    st.stop()
+                
                 with open(output_filename, "rb") as pdf_file:
                     pdf_bytes = pdf_file.read()
+                
+                # Check if we actually read data
+                if len(pdf_bytes) == 0:
+                    st.error("❌ PDF file is empty")
+                    st.stop()
+                
+                st.success(f"📄 PDF Ready! ({len(pdf_bytes):,} bytes)")
                     
                 download_col1, download_col2, download_col3 = st.columns([1, 2, 1])
                 with download_col2:
