@@ -1,4 +1,13 @@
 import streamlit as st
+
+# CRITICAL: st.set_page_config() MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Match Scorecard Generator", 
+    layout="centered", 
+    page_icon="🏏",
+    initial_sidebar_state="collapsed"
+)
+
 import os
 import time
 import sys
@@ -35,14 +44,6 @@ if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from script import get_match_data, generate_pdf
-
-# Set page config
-st.set_page_config(
-    page_title="Match Scorecard Generator", 
-    layout="centered", 
-    page_icon="🏏",
-    initial_sidebar_state="collapsed"
-)
 
 # Custom CSS
 st.markdown("""
