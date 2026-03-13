@@ -2,8 +2,8 @@ import streamlit as st
 
 # CRITICAL: st.set_page_config() MUST be the first Streamlit command
 st.set_page_config(
-    page_title="Match Scorecard Generator", 
-    layout="centered", 
+    page_title="Match Scorecard Generator",
+    layout="centered",
     page_icon="🏏",
     initial_sidebar_state="collapsed"
 )
@@ -12,32 +12,6 @@ import os
 import time
 import sys
 import asyncio
-import subprocess
-
-# Function to install playwright browsers
-@st.cache_resource
-def install_playwright_browsers():
-    """Install Playwright browsers on first run"""
-    try:
-        print("Installing Playwright browsers...")
-        result = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
-        if result.returncode == 0:
-            print("✓ Playwright browsers installed successfully")
-            return True
-        else:
-            print(f"✗ Installation failed: {result.stderr}")
-            return False
-    except Exception as e:
-        print(f"✗ Installation error: {e}")
-        return False
-
-# Run installation
-install_status = install_playwright_browsers()
 
 # Fix for Windows event loop policy
 if sys.platform.startswith("win"):
@@ -72,10 +46,6 @@ st.markdown("""
 st.title("🏏 Match Scorecard Generator")
 st.markdown("Generate a professional PDF scorecard from a CricHeroes match URL.")
 
-# Show installation status
-if not install_status:
-    st.warning("⚠️ Playwright installation may have issues. The app will attempt to continue.")
-
 # Add helpful instructions
 with st.expander("ℹ️ How to use", expanded=False):
     st.markdown("""
@@ -85,26 +55,26 @@ with st.expander("ℹ️ How to use", expanded=False):
     4. Click "Generate Scorecard"
     5. Wait 30-60 seconds for processing
     6. Download your PDF!
-    
-    **Example URL:**  
+
+    **Example URL:**
     `https://cricheroes.in/match/12345678`
     """)
 
 # Input Form
 with st.form("scorecard_form"):
     match_url = st.text_input(
-        "Match URL", 
+        "Match URL",
         placeholder="https://cricheroes.in/scorecard/...",
         help="Paste the full CricHeroes match URL"
     )
-    
+
     # Optional Override for Man of the Match
     man_of_the_match = st.text_input(
-        "Man of the Match (Optional)", 
+        "Man of the Match (Optional)",
         placeholder="Leave blank to extract automatically",
         help="Override the Man of the Match name if needed"
     )
-    
+
     submitted = st.form_submit_button("🎯 Generate Scorecard", type="primary")
 
 if submitted:
@@ -113,54 +83,51 @@ if submitted:
     else:
         # Create columns for better layout
         col1, col2, col3 = st.columns([1, 2, 1])
-        
+
         with col2:
             # Progress Bar
             progress_bar = st.progress(0, text="Initializing...")
             status_text = st.empty()
-            
+
             try:
                 # Step 1: Connect
                 status_text.info("🔗 Connecting to CricHeroes...")
                 progress_bar.progress(10, text="Connecting...")
                 time.sleep(0.5)
-                
+
                 # Step 2: Scrape data
                 status_text.info("🕷️ Scraping match data (this may take 30-60 seconds)...")
                 progress_bar.progress(20, text="Scraping data...")
-                
+
                 # Create an expander to show logs
                 with st.expander("🔍 View scraping progress (for debugging)", expanded=True):
                     log_placeholder = st.empty()
-                
-                # Call the scraping function
-                import io
-                import sys
-                from contextlib import redirect_stderr
-                
+
                 # Capture stderr to show progress
+                import io
+                from contextlib import redirect_stderr
+
                 stderr_capture = io.StringIO()
-                
+
                 try:
                     with redirect_stderr(stderr_capture):
                         data_packet = get_match_data(match_url)
-                    
+
                     # Show captured logs
                     logs = stderr_capture.getvalue()
                     if logs:
                         log_placeholder.code(logs, language="log")
-                    
+
                 except Exception as scrape_error:
-                    # Show captured logs even on error
                     logs = stderr_capture.getvalue()
                     if logs:
                         log_placeholder.code(logs, language="log")
                     raise scrape_error
-                
+
                 progress_bar.progress(60, text="Data extracted!")
                 status_text.success("✅ Data extracted successfully!")
                 time.sleep(0.5)
-                
+
                 # Step 3: Override Data if needed
                 if man_of_the_match:
                     status_text.info(f"✏️ Overriding Man of the Match with: {man_of_the_match}")
@@ -168,42 +135,38 @@ if submitted:
                         data_packet['meta'] = {}
                     data_packet['meta']['man_of_the_match'] = man_of_the_match
                     time.sleep(0.5)
-                
+
                 # Step 4: Generate PDF
                 status_text.info("📄 Generating PDF Report...")
                 progress_bar.progress(70, text="Generating PDF...")
-                
+
                 output_filename = "scorecard.pdf"
-                
+
                 try:
                     generate_pdf(data_packet, output_filename)
-                    
-                    # Verify PDF was created
+
                     if not os.path.exists(output_filename):
                         raise FileNotFoundError(f"PDF file was not created: {output_filename}")
-                    
-                    # Check file size
+
                     file_size = os.path.getsize(output_filename)
                     if file_size == 0:
                         raise ValueError("PDF file is empty (0 bytes)")
-                    
+
                     print(f"✓ PDF generated successfully: {file_size} bytes")
-                    
+
                 except Exception as pdf_error:
                     st.error(f"❌ PDF Generation Failed: {str(pdf_error)}")
                     raise
-                
+
                 progress_bar.progress(100, text="Complete!")
                 status_text.success("✅ Scorecard generated successfully!")
-                
-                # Clear progress indicators
+
                 time.sleep(1)
                 progress_bar.empty()
                 status_text.empty()
-                
-                # Success message
+
                 st.success("🎉 Your scorecard is ready!")
-                
+
                 # Show match info
                 meta = data_packet.get('meta', {})
                 if meta:
@@ -215,25 +178,22 @@ if submitted:
                     with info_col2:
                         st.metric("Result", meta.get('result', 'N/A'))
                         st.metric("Man of the Match", meta.get('man_of_the_match', 'N/A'))
-                
-                # PDF Download
+
                 st.markdown("---")
-                
-                # Verify file exists before trying to read
+
                 if not os.path.exists(output_filename):
                     st.error(f"❌ PDF file not found: {output_filename}")
                     st.stop()
-                
+
                 with open(output_filename, "rb") as pdf_file:
                     pdf_bytes = pdf_file.read()
-                
-                # Check if we actually read data
+
                 if len(pdf_bytes) == 0:
                     st.error("❌ PDF file is empty")
                     st.stop()
-                
+
                 st.success(f"📄 PDF Ready! ({len(pdf_bytes):,} bytes)")
-                    
+
                 download_col1, download_col2, download_col3 = st.columns([1, 2, 1])
                 with download_col2:
                     st.download_button(
@@ -244,23 +204,20 @@ if submitted:
                         type="primary",
                         use_container_width=True
                     )
-                
-                # Success tip
+
                 st.info("💡 Tip: You can generate another scorecard by entering a new URL above!")
-                    
+
             except Exception as e:
                 progress_bar.empty()
                 status_text.empty()
-                
+
                 st.error(f"❌ An error occurred: {str(e)}")
-                
-                # Show detailed error in expander
+
                 with st.expander("🔍 Error Details"):
                     st.code(str(e))
                     if 'data_packet' in locals():
                         st.json(data_packet)
-                
-                # Troubleshooting tips
+
                 st.markdown("### 💡 Troubleshooting Tips:")
                 st.markdown("""
                 - Make sure the URL is correct and the match is completed
@@ -268,12 +225,11 @@ if submitted:
                 - Check if the match page is accessible in your browser
                 - If using a mobile link, try the desktop version
                 """)
-                
-                # Show debug files if available
+
                 if os.path.exists("debug_screenshot.png"):
                     with st.expander("📸 Debug Screenshot"):
                         st.image("debug_screenshot.png")
-                
+
                 if os.path.exists("debug_page.html"):
                     with st.expander("📄 Debug HTML"):
                         with open("debug_page.html", "r") as f:
