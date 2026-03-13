@@ -1,28 +1,20 @@
 FROM python:3.11-slim
 
-# Install system dependencies for Playwright and WeasyPrint
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    libgirepository1.0-dev \
-    gcc \
-    libcairo2 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
-    libffi-dev \
-    shared-mime-info \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
-
+# Set working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Temporarily copy requirements to install python dependencies first
 COPY requirements.txt .
+
+# Install python packages (including playwright which provides the CLI)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers and their dependencies
-RUN playwright install chromium && playwright install-deps chromium
+# Run Playwright's built-in dependency installer which knows exactly what apt packages it needs
+# We also install some basic fonts for the PDF generation
+RUN apt-get update && apt-get install -y fonts-liberation fonts-noto fonts-noto-cjk \
+    && playwright install chromium \
+    && playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of the application
 COPY . .
