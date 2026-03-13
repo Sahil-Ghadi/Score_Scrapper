@@ -1,20 +1,24 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+
+# Switch to root to install python and system dependencies
+USER root
+
+# Install Python and necessary dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Temporarily copy requirements to install python dependencies first
+# Copy requirements
 COPY requirements.txt .
 
-# Install python packages (including playwright which provides the CLI)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Run Playwright's built-in dependency installer which knows exactly what apt packages it needs
-# We also install some basic fonts for the PDF generation
-RUN apt-get update && apt-get install -y fonts-liberation fonts-noto fonts-noto-cjk \
-    && playwright install chromium \
-    && playwright install-deps chromium \
-    && rm -rf /var/lib/apt/lists/*
+# Install python dependencies
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
@@ -23,4 +27,4 @@ COPY . .
 EXPOSE 8501
 
 # Command to run the application
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["python3", "-m", "streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
